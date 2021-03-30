@@ -3824,7 +3824,8 @@
                 month: "MMM 'yy",
                 day: 'dd MMM',
                 hour: 'HH:mm',
-                minute: 'HH:mm:ss'
+                minute: 'HH:mm:ss',
+                second: 'HH:mm:ss'
               }
             },
             axisBorder: {
@@ -7042,9 +7043,11 @@
 
         var tsMin = this.getDate(minX);
         var tsMax = this.getDate(maxX);
-        var minD = this.formatDate(tsMin, 'yyyy MM dd HH mm ss').split(' ');
-        var maxD = this.formatDate(tsMax, 'yyyy MM dd HH mm ss').split(' ');
+        var minD = this.formatDate(tsMin, 'yyyy MM dd HH mm ss fff').split(' ');
+        var maxD = this.formatDate(tsMax, 'yyyy MM dd HH mm ss fff').split(' ');
         return {
+          minMillisecond: parseInt(minD[6], 10),
+          maxMillisecond: parseInt(maxD[6], 10),
           minSecond: parseInt(minD[5], 10),
           maxSecond: parseInt(maxD[5], 10),
           minMinute: parseInt(minD[4], 10),
@@ -7468,7 +7471,9 @@
         var opts = {
           w: w,
           seriesIndex: seriesIndex,
-          dataPointIndex: dataPointIndex
+          dataPointIndex: dataPointIndex,
+          start: start,
+          end: end
         };
 
         if (typeof yLbTitleFormatter === 'function') {
@@ -10216,7 +10221,7 @@
               }
 
               if (sI === 0) {
-                columns.push(isTimeStamp(cat) ? w.config.chart.toolbar.export.csv.dateFormatter(cat) : cat.split(columnDelimiter).join(''));
+                columns.push(isTimeStamp(cat) ? w.config.chart.toolbar.export.csv.dateFormatter(cat) : Utils.isNumber(cat) ? cat : cat.split(columnDelimiter).join(''));
 
                 for (var ci = 0; ci < w.globals.series.length; ci++) {
                   columns.push(w.globals.series[ci][i]);
@@ -22571,6 +22576,9 @@
     return TreemapChart;
   }();
 
+  var MINUTES_IN_DAY = 24 * 60;
+  var SECONDS_IN_DAY = MINUTES_IN_DAY * 60;
+  var MIN_ZOOM_DAYS = 10 / SECONDS_IN_DAY;
   /**
    * ApexCharts TimeScale Class for generating time ticks for x-axis.
    *
@@ -22601,12 +22609,12 @@
         }
 
         var dt = new DateTime(this.ctx);
-        var daysDiff = (maxX - minX) / (1000 * 60 * 60 * 24);
+        var daysDiff = (maxX - minX) / (1000 * SECONDS_IN_DAY);
         this.determineInterval(daysDiff);
         w.globals.disableZoomIn = false;
         w.globals.disableZoomOut = false;
 
-        if (daysDiff < 0.005) {
+        if (daysDiff < MIN_ZOOM_DAYS) {
           w.globals.disableZoomIn = true;
         } else if (daysDiff > 50000) {
           w.globals.disableZoomOut = true;
@@ -22618,12 +22626,13 @@
         var minutesWidthOnXAxis = hoursWidthOnXAxis / 60;
         var secondsWidthOnXAxis = minutesWidthOnXAxis / 60;
         var numberOfHours = Math.floor(daysDiff * 24);
-        var numberOfMinutes = Math.floor(daysDiff * 24 * 60);
-        var numberOfSeconds = Math.floor(daysDiff * 24 * 60 * 60);
+        var numberOfMinutes = Math.floor(daysDiff * MINUTES_IN_DAY);
+        var numberOfSeconds = Math.floor(daysDiff * SECONDS_IN_DAY);
         var numberOfDays = Math.floor(daysDiff);
         var numberOfMonths = Math.floor(daysDiff / 30);
         var numberOfYears = Math.floor(daysDiff / 365);
         var firstVal = {
+          minMillisecond: timeIntervals.minMillisecond,
           minSecond: timeIntervals.minSecond,
           minMinute: timeIntervals.minMinute,
           minHour: timeIntervals.minHour,
@@ -22631,6 +22640,7 @@
           minMonth: timeIntervals.minMonth,
           minYear: timeIntervals.minYear
         };
+        var currentMillisecond = firstVal.minMillisecond;
         var currentSecond = firstVal.minSecond;
         var currentMinute = firstVal.minMinute;
         var currentHour = firstVal.minHour;
@@ -22640,6 +22650,7 @@
         var currentYear = firstVal.minYear;
         var params = {
           firstVal: firstVal,
+          currentMillisecond: currentMillisecond,
           currentSecond: currentSecond,
           currentMinute: currentMinute,
           currentHour: currentHour,
@@ -22688,8 +22699,15 @@
               break;
             }
 
+          case 'minutes_fives':
           case 'minutes':
             this.generateMinuteScale(params);
+            break;
+
+          case 'seconds_tens':
+          case 'seconds_fives':
+          case 'seconds':
+            this.generateSecondScale(params);
             break;
         } // first, we will adjust the month values index
         // as in the upper function, it is starting from 0
@@ -22719,6 +22737,12 @@
             return _objectSpread2(_objectSpread2({}, defaultReturn), {}, {
               value: ts.value,
               minute: ts.value
+            });
+          } else if (ts.unit === 'second') {
+            return _objectSpread2(_objectSpread2({}, defaultReturn), {}, {
+              value: ts.value,
+              minute: ts.minute,
+              second: ts.second
             });
           }
 
@@ -22819,7 +22843,21 @@
 
               break;
 
-            case 'minutes':
+            case 'minutes_fives':
+              if (value % 5 !== 0) {
+                shouldNotPrint = true;
+              }
+
+              break;
+
+            case 'seconds_tens':
+              if (value % 10 !== 0) {
+                shouldNotPrint = true;
+              }
+
+              break;
+
+            case 'seconds_fives':
               if (value % 5 !== 0) {
                 shouldNotPrint = true;
               }
@@ -22827,7 +22865,7 @@
               break;
           }
 
-          if (_this.tickInterval === 'minutes' || _this.tickInterval === 'hours') {
+          if (_this.tickInterval === 'hours' || _this.tickInterval === 'minutes_fives' || _this.tickInterval === 'seconds_tens' || _this.tickInterval === 'seconds_fives') {
             if (!shouldNotPrint) {
               return true;
             }
@@ -22856,47 +22894,62 @@
     }, {
       key: "determineInterval",
       value: function determineInterval(daysDiff) {
+        var yearsDiff = daysDiff / 365;
+        var hoursDiff = daysDiff * 24;
+        var minutesDiff = hoursDiff * 60;
+        var secondsDiff = minutesDiff * 60;
+
         switch (true) {
-          case daysDiff > 1825:
-            // difference is more than 5 years
+          case yearsDiff > 5:
             this.tickInterval = 'years';
             break;
 
-          case daysDiff > 800 && daysDiff <= 1825:
+          case daysDiff > 800:
             this.tickInterval = 'half_year';
             break;
 
-          case daysDiff > 180 && daysDiff <= 800:
+          case daysDiff > 180:
             this.tickInterval = 'months';
             break;
 
-          case daysDiff > 90 && daysDiff <= 180:
+          case daysDiff > 90:
             this.tickInterval = 'months_fortnight';
             break;
 
-          case daysDiff > 60 && daysDiff <= 90:
+          case daysDiff > 60:
             this.tickInterval = 'months_days';
             break;
 
-          case daysDiff > 30 && daysDiff <= 60:
+          case daysDiff > 30:
             this.tickInterval = 'week_days';
             break;
 
-          case daysDiff > 2 && daysDiff <= 30:
+          case daysDiff > 2:
             this.tickInterval = 'days';
             break;
 
-          case daysDiff > 0.1 && daysDiff <= 2:
-            // less than  2 days
+          case hoursDiff > 2.4:
             this.tickInterval = 'hours';
             break;
 
-          case daysDiff < 0.1:
+          case minutesDiff > 15:
+            this.tickInterval = 'minutes_fives';
+            break;
+
+          case minutesDiff > 5:
             this.tickInterval = 'minutes';
             break;
 
+          case minutesDiff > 1:
+            this.tickInterval = 'seconds_tens';
+            break;
+
+          case secondsDiff > 20:
+            this.tickInterval = 'seconds_fives';
+            break;
+
           default:
-            this.tickInterval = 'days';
+            this.tickInterval = 'seconds';
             break;
         }
       }
@@ -23203,7 +23256,7 @@
     }, {
       key: "generateMinuteScale",
       value: function generateMinuteScale(_ref5) {
-        var firstVal = _ref5.firstVal,
+        var currentMillisecond = _ref5.currentMillisecond,
             currentSecond = _ref5.currentSecond,
             currentMinute = _ref5.currentMinute,
             currentHour = _ref5.currentHour,
@@ -23215,26 +23268,14 @@
             numberOfMinutes = _ref5.numberOfMinutes;
         var yrCounter = 0;
         var unit = 'minute';
-        var remainingSecs = 60 - firstVal.minSecond;
-        var firstTickPosition = remainingSecs * secondsWidthOnXAxis;
-        var firstTickValue = firstVal.minMinute + 1;
-        var minute = firstTickValue + 1;
+        var remainingSecs = 60 - currentSecond;
+        var firstTickPosition = (remainingSecs - currentMillisecond / 1000) * secondsWidthOnXAxis;
+        var minute = currentMinute + 1;
         var date = currentDate;
         var month = currentMonth;
         var year = currentYear;
-        var hour = currentHour; // push the first tick in the array
-
-        this.timeScaleArray.push({
-          position: firstTickPosition,
-          value: firstTickValue,
-          unit: unit,
-          day: date,
-          hour: hour,
-          minute: minute,
-          year: year,
-          month: Utils.monthMod(month)
-        });
-        var pos = firstTickPosition; // keep drawing rest of the ticks
+        var hour = currentHour;
+        var pos = firstTickPosition;
 
         for (var i = 0; i < numberOfMinutes; i++) {
           if (minute >= 60) {
@@ -23246,7 +23287,6 @@
             }
           }
 
-          pos = minutesWidthOnXAxis + pos;
           this.timeScaleArray.push({
             position: pos,
             value: minute,
@@ -23254,10 +23294,65 @@
             hour: hour,
             minute: minute,
             day: date,
-            year: this._getYear(currentYear, month, yrCounter),
+            year: this._getYear(year, month, yrCounter),
             month: Utils.monthMod(month)
           });
+          pos += minutesWidthOnXAxis;
           minute++;
+        }
+      }
+    }, {
+      key: "generateSecondScale",
+      value: function generateSecondScale(_ref6) {
+        var currentMillisecond = _ref6.currentMillisecond,
+            currentSecond = _ref6.currentSecond,
+            currentMinute = _ref6.currentMinute,
+            currentHour = _ref6.currentHour,
+            currentDate = _ref6.currentDate,
+            currentMonth = _ref6.currentMonth,
+            currentYear = _ref6.currentYear,
+            secondsWidthOnXAxis = _ref6.secondsWidthOnXAxis,
+            numberOfSeconds = _ref6.numberOfSeconds;
+        var yrCounter = 0;
+        var unit = 'second';
+        var remainingMillisecs = 1000 - currentMillisecond;
+        var firstTickPosition = remainingMillisecs / 1000 * secondsWidthOnXAxis;
+        var second = currentSecond + 1;
+        var minute = currentMinute;
+        var date = currentDate;
+        var month = currentMonth;
+        var year = currentYear;
+        var hour = currentHour;
+        var pos = firstTickPosition;
+
+        for (var i = 0; i < numberOfSeconds; i++) {
+          if (second >= 60) {
+            minute++;
+            second = 0;
+
+            if (minute >= 60) {
+              hour++;
+              minute = 0;
+
+              if (hour === 24) {
+                hour = 0;
+              }
+            }
+          }
+
+          this.timeScaleArray.push({
+            position: pos,
+            value: second,
+            unit: unit,
+            hour: hour,
+            minute: minute,
+            second: second,
+            day: date,
+            year: this._getYear(year, month, yrCounter),
+            month: Utils.monthMod(month)
+          });
+          pos += secondsWidthOnXAxis;
+          second++;
         }
       }
     }, {
@@ -23277,10 +23372,19 @@
           raw += ts.unit === 'hour' ? 'T' + ('0' + value).slice(-2) : 'T00';
         } else {
           raw += 'T' + ('0' + (ts.hour ? ts.hour : '0')).slice(-2);
-        } // unit is minute
+        }
 
+        if (ts.unit === 'minute') {
+          raw += ':' + ('0' + value).slice(-2);
+        } else {
+          raw += ':' + (ts.minute ? ('0' + ts.minute).slice(-2) : '00');
+        }
 
-        raw += ts.unit === 'minute' ? ':' + ('0' + value).slice(-2) + ':00' : ':00:00';
+        if (ts.unit === 'second') {
+          raw += ':' + ('0' + value).slice(-2);
+        } else {
+          raw += ':00';
+        }
 
         if (this.utc) {
           raw += '.000Z';
@@ -23315,6 +23419,7 @@
             if (ts.unit === 'day') customFormat = dtFormatter.day;
             if (ts.unit === 'hour') customFormat = dtFormatter.hour;
             if (ts.unit === 'minute') customFormat = dtFormatter.minute;
+            if (ts.unit === 'second') customFormat = dtFormatter.second;
             value = dt.formatDate(dateToFormat, customFormat);
           } else {
             value = dt.formatDate(dateToFormat, w.config.xaxis.labels.format);
